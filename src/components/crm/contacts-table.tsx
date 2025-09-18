@@ -80,11 +80,14 @@ const getImage = (id: string) =>
 
 /**
  * Defines the columns for the contacts data table.
- * @param onViewProfile - Callback function to handle viewing a lead's profile.
- * @returns An array of column definitions for the TanStack Table.
+ * @param {object} props - The component props.
+ * @param {(lead: Lead) => void} props.onViewProfile - Callback to handle viewing a lead's profile.
+ * @param {(lead: Lead) => void} props.onDelete - Callback to trigger the deletion of a single lead.
+ * @returns {ColumnDef<Lead>[]} An array of column definitions for the TanStack Table.
  */
 export const columns = (
-  onViewProfile: (lead: Lead) => void
+  onViewProfile: (lead: Lead) => void,
+  onDelete: (lead: Lead) => void
 ): ColumnDef<Lead>[] => [
   // Checkbox column for row selection.
   {
@@ -217,8 +220,12 @@ export const columns = (
       );
     },
     cell: ({ row }) => {
-        const entryDate = new Date(row.original.createdAt);
-        return <div>{format(entryDate, "MMM dd, yyyy")}</div>
+        const [formattedDate, setFormattedDate] = React.useState('');
+        React.useEffect(() => {
+          const entryDate = new Date(row.original.createdAt);
+          setFormattedDate(format(entryDate, "MMM dd, yyyy"));
+        }, [row.original.createdAt]);
+        return <div>{formattedDate}</div>
     },
     // Custom sorting function for dates.
     sortingFn: (rowA, rowB) => {
@@ -253,7 +260,7 @@ export const columns = (
               Copy Lead ID
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-             <DropdownMenuItem className="text-destructive">
+             <DropdownMenuItem className="text-destructive" onSelect={() => onDelete(lead)}>
               Delete lead
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -399,7 +406,44 @@ export function ContactsTable({ data, onViewProfile }: ContactsTableProps) {
   const [rowSelection, setRowSelection] = React.useState({});
   const [date, setDate] = React.useState<Date>();
 
-  const tableColumns = React.useMemo(() => columns(onViewProfile), [onViewProfile]);
+  const [leadToDelete, setLeadToDelete] = React.useState<Lead | null>(null);
+  const [isDeleteSingleDialogOpen, setDeleteSingleDialogOpen] = React.useState(false);
+  const [deleteSingleConfirmation, setDeleteSingleConfirmation] = React.useState("");
+
+  const [isPending, startTransition] = useTransition();
+  const [deleteState, deleteAction] = useActionState(bulkDeleteLeadsAction, { message: undefined, error: undefined });
+  const { toast } = useToast();
+
+  const handleDeleteRequest = (lead: Lead) => {
+    setLeadToDelete(lead);
+    setDeleteSingleDialogOpen(true);
+  };
+  
+  React.useEffect(() => {
+    if (deleteState.message) {
+      toast({ title: "Success", description: deleteState.message });
+      setDeleteSingleDialogOpen(false);
+      setLeadToDelete(null);
+    } else if (deleteState.error) {
+      toast({ variant: "destructive", title: "Error", description: deleteState.error });
+    }
+  }, [deleteState, toast]);
+
+  React.useEffect(() => {
+    if (!isDeleteSingleDialogOpen) {
+      setDeleteSingleConfirmation("");
+    }
+  }, [isDeleteSingleDialogOpen]);
+
+  const handleDeleteSingle = () => {
+    if (!leadToDelete) return;
+    const formData = new FormData();
+    formData.append('leadIds', leadToDelete.id);
+    startTransition(() => deleteAction(formData));
+  };
+
+
+  const tableColumns = React.useMemo(() => columns(onViewProfile, handleDeleteRequest), [onViewProfile]);
 
   // Filters the data based on the selected date.
   const filteredData = React.useMemo(() => {
@@ -609,6 +653,41 @@ export function ContactsTable({ data, onViewProfile }: ContactsTableProps) {
           </Button>
         </div>
       </div>
+       {/* Confirmation dialog for single lead delete */}
+        <AlertDialog open={isDeleteSingleDialogOpen} onOpenChange={setDeleteSingleDialogOpen}>
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        This action cannot be undone. This will permanently delete the lead for <strong>{leadToDelete?.name}</strong>.
+                        To confirm, please type <strong>DELETE</strong> in the box below.
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <div className="my-2">
+                    <Label htmlFor="delete-single-confirm" className="sr-only">Confirm Deletion</Label>
+                    <Input
+                        id="delete-single-confirm"
+                        value={deleteSingleConfirmation}
+                        onChange={(e) => setDeleteSingleConfirmation(e.target.value)}
+                        placeholder='Type "DELETE" to confirm'
+                        autoComplete="off"
+                    />
+                </div>
+                <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction 
+                        onClick={handleDeleteSingle} 
+                        disabled={isPending || deleteSingleConfirmation !== "DELETE"}
+                        className="bg-destructive hover:bg-destructive/90"
+                    >
+                        {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Delete Permanently
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
     </div>
   );
 }
+
+    
